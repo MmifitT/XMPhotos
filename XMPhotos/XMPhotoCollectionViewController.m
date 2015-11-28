@@ -31,10 +31,22 @@
     PHFetchResult *_albums;
     PHCachingImageManager *_imageManager;
 }
+/// ios9前使用略缩图
 @property (nonatomic,strong) NSMutableArray *arrThumbnail;
+/// ios9前使用原图
 @property (nonatomic,strong) NSMutableArray *arrOrg;
-@property (nonatomic,copy) PhotoSelectedBlock block;
+/// 多选时候的图片引所
+@property (nonatomic,strong) NSMutableArray *selImages;
+@property (nonatomic,strong) NSMutableArray *selIndex;
+
+@property (nonatomic,copy) PhotoSelectedBlock blockPhoto;
+@property (nonatomic,copy) PhotoesSelectedBlock blockPhotoes;
+/// 是否多选
+@property (nonatomic,assign) BOOL isMutableSelected;
 @property CGRect previousPreheatRect;
+
+@property (nonatomic,strong) UIButton *sureBtn;
+@property (nonatomic,strong) UIButton *cancelBtn;
 @end
 
 @implementation XMPhotoCollectionViewController
@@ -48,13 +60,16 @@ static NSString * const reuseIdentifier = @"XMPhotosCollectionViewCell";
     self.collectionView.dataSource = self;
     _arrThumbnail = [NSMutableArray array];
     _arrOrg = [NSMutableArray array];
+    if (_selectCount <=0 ) {
+        _selectCount = -1;
+    }
     if (_numPerLine <= 0) {
         _numPerLine = 3;
     }
     if (_proportion <= 0) {
         _proportion = 1.0f;
     }
-    
+    [self initBtn];
     [self imageFromAssert];
 }
 
@@ -79,6 +94,8 @@ static NSString * const reuseIdentifier = @"XMPhotosCollectionViewCell";
     }
     _arrOrg = nil;
     _arrThumbnail = nil;
+    _selIndex = nil;
+    _selImages = nil;
 }
 
 - (void)didReceiveMemoryWarning {
@@ -86,18 +103,75 @@ static NSString * const reuseIdentifier = @"XMPhotosCollectionViewCell";
     // Dispose of any resources that can be recreated.
 }
 
-- (void)setSelectedBlock:(PhotoSelectedBlock)block{
-    self.block = block;
+- (void)initBtn{
+    if (self.isMutableSelected) {
+        _selImages = [NSMutableArray array];
+        _selIndex = [NSMutableArray array];
+        CGFloat btnH = 40;
+        CGFloat space = 10;
+        CGRect rect = self.view.frame;
+        UIButton *btn1 = [UIButton buttonWithType:UIButtonTypeCustom];
+        [btn1 setTitle:@"确定" forState:UIControlStateNormal];
+        [btn1 setTitleColor:[UIColor colorWithRed:41/255.0 green:134/255.0 blue:229/255.0 alpha:1] forState:UIControlStateNormal];
+        [btn1 setBackgroundImage:[UIImage imageNamed:@"xm_photoBtnBG"] forState:UIControlStateNormal];
+        [btn1 setImage:[UIImage imageNamed:@"xm_sureIconN"] forState:UIControlStateNormal];
+        [btn1 addTarget:self action:@selector(sureBtnClicked:) forControlEvents:UIControlEventTouchUpInside];
+        rect.origin.y = rect.size.height - btnH - space;
+        rect.origin.x = space;
+        rect.size.height = btnH;rect.size.width = 96;
+        btn1.frame = rect;
+        [self.view addSubview:btn1];
+        _sureBtn = btn1;
+        
+        UIButton *btn2 = [UIButton buttonWithType:UIButtonTypeCustom];
+        [btn2 setTitle:@"取消" forState:UIControlStateNormal];
+        [btn2 setTitleColor:[UIColor colorWithRed:41/255.0 green:134/255.0 blue:229/255.0 alpha:1] forState:UIControlStateNormal];
+        [btn2 setBackgroundImage:[UIImage imageNamed:@"xm_photoBtnBG"] forState:UIControlStateNormal];
+        [btn2 setImage:[UIImage imageNamed:@"xm_cancelIconN"] forState:UIControlStateNormal];
+        [btn2 addTarget:self action:@selector(cancelBtnClicked:) forControlEvents:UIControlEventTouchUpInside];
+        rect.origin.x = self.view.frame.size.width - rect.size.width - space;
+        btn2.frame = rect;
+        [self.view addSubview:btn2];
+        _cancelBtn = btn2;
+    }
 }
-/*
-#pragma mark - Navigation
 
-// In a storyboard-based application, you will often want to do a little preparation before navigation
-- (void)prepareForSegue:(UIStoryboardSegue *)segue sender:(id)sender {
-    // Get the new view controller using [segue destinationViewController].
-    // Pass the selected object to the new view controller.
+- (void)sureBtnClicked:(id)sender{
+    if (self.blockPhotoes) {
+        for (NSNumber *index in self.selIndex) {
+            if ([[UIDevice currentDevice].systemVersion floatValue] < 8.6) {
+                [self selectedImage:[index intValue]];
+            }
+            if ([[UIDevice currentDevice].systemVersion floatValue] > 8.6) {
+                [self PHImage:[index intValue]];
+            }
+        }
+    }
 }
-*/
+
+- (void)cancelBtnClicked:(id)sender{
+    [self.selImages removeAllObjects];
+    [self.selIndex removeAllObjects];
+    [self.collectionView reloadData];
+}
+
+- (void)setSelectedPhotoBlock:(PhotoSelectedBlock)block{
+    self.blockPhoto = block;
+    self.isMutableSelected = NO;
+    self.blockPhotoes = nil;
+}
+
+- (void)setSelectedPhotoesBlock:(PhotoesSelectedBlock)block{
+    self.blockPhotoes = block;
+    self.isMutableSelected = YES;
+    self.blockPhoto = nil;
+}
+
+- (void)delayDismiss:(NSInteger)delay{
+    dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(delay * NSEC_PER_SEC)), dispatch_get_main_queue(), ^{
+        [self.navigationController popViewControllerAnimated:YES];
+    });
+}
 
 - (void)imageFromAssert{
     if ([[UIDevice currentDevice].systemVersion floatValue] < 8.6) {
@@ -118,6 +192,8 @@ static NSString * const reuseIdentifier = @"XMPhotosCollectionViewCell";
             NSLog(@"---Group not found!\n");
         }];
     }
+    
+    //ios9以上
     if ([[UIDevice currentDevice].systemVersion floatValue] > 8.6) {
         PHFetchOptions *options = [[PHFetchOptions alloc] init];
         /// 按创建日期排序
@@ -213,13 +289,20 @@ static NSString * const reuseIdentifier = @"XMPhotosCollectionViewCell";
 - (void)selectedImage:(NSInteger)index{
     ALAssetsLibrary *assetLibrary = [[ALAssetsLibrary alloc] init];
     NSURL *url = [NSURL URLWithString:[self.arrOrg objectAtIndex:index]];
-
     [assetLibrary assetForURL:url resultBlock:^(ALAsset *asset)  {
         if ([[asset valueForProperty:ALAssetPropertyType] isEqualToString:ALAssetTypePhoto]) {
-            if (self.block) {
-                CGImageRef ref = [[asset defaultRepresentation] fullScreenImage];
-                UIImage *image = [[UIImage alloc] initWithCGImage:ref];
-                self.block(image,index);
+            CGImageRef ref = [[asset defaultRepresentation] fullScreenImage];
+            UIImage *image = [[UIImage alloc] initWithCGImage:ref];
+            if (self.isMutableSelected) {
+                [self.selImages addObject:image];
+                if (self.selIndex.count == self.selImages.count) {
+                    [self delayDismiss:0.5];
+                    self.blockPhotoes(self.selImages);
+                }
+            }
+            if (self.blockPhoto) {
+                [self delayDismiss:0.5];
+                self.blockPhoto(image,index);
             }
         }
     }failureBlock:^(NSError *error) {
@@ -227,18 +310,17 @@ static NSString * const reuseIdentifier = @"XMPhotosCollectionViewCell";
     }];
 }
 
-- (void)PHSelectedInmage:(NSInteger)index{
+- (void)PHImage:(NSInteger)index{
     PHAsset *asset = _albums[index];
     [_imageManager requestImageForAsset:asset
                              targetSize:AssetGridThumbnailSize
                             contentMode:PHImageContentModeAspectFill
                                 options:nil
                           resultHandler:^(UIImage *result, NSDictionary *info) {
-                              NSString *str = info[@"PHImageFileSandboxExtensionTokenKey"];
-                              if (str) {
-                                  if (self.block) {
-                                  self.block(result,index);
-                                  }
+                              [self.selImages addObject:result];
+                              if (self.selIndex.count == self.selImages.count) {
+                                  [self delayDismiss:0.5];
+                                  self.blockPhotoes(self.selImages);
                               }
                           }];
 }
@@ -253,16 +335,6 @@ static NSString * const reuseIdentifier = @"XMPhotosCollectionViewCell";
         [self updateCachedAssets];
     }
 }
-
-/*
- #pragma mark - Navigation
- 
- // In a storyboard-based application, you will often want to do a little preparation before navigation
- - (void)prepareForSegue:(UIStoryboardSegue *)segue sender:(id)sender {
- // Get the new view controller using [segue destinationViewController].
- // Pass the selected object to the new view controller.
- }
- */
 
 #pragma mark <UICollectionViewDataSource>
 
@@ -293,24 +365,68 @@ static NSString * const reuseIdentifier = @"XMPhotosCollectionViewCell";
     if ([[UIDevice currentDevice].systemVersion floatValue] < 8.6) {
         cell.imageView.image = [self.arrThumbnail objectAtIndex:indexPath.row];
     }
-    cell.imageView.contentMode = UIViewContentModeScaleAspectFit;
+    if ([self.selIndex containsObject:@(indexPath.row)]) {
+        cell.selBtn.selected = YES;
+        NSLog(@"++");
+    } else {
+        cell.selBtn.selected = NO;
+        NSLog(@"--");
+    }
+    //cell.imageView.contentMode = UIViewContentModeScaleAspectFit;
     return cell;
 }
 
 #pragma mark <UICollectionViewDelegate>
 - (CGSize)collectionView:(UICollectionView *)collectionView layout:(UICollectionViewLayout*)collectionViewLayout sizeForItemAtIndexPath:(NSIndexPath *)indexPath{
     CGSize size = collectionView.frame.size;
-    size.width = (size.width - self.numPerLine * 10 - 10) / self.numPerLine;
+    size.width = (size.width - 4) / self.numPerLine;
     size.height = size.width / self.proportion;
     return size;
 }
 
 - (void)collectionView:(UICollectionView *)collectionView didSelectItemAtIndexPath:(NSIndexPath *)indexPath{
-     if ([[UIDevice currentDevice].systemVersion floatValue] < 8.6) {
-         [self selectedImage:indexPath.row];
-     }
-     if ([[UIDevice currentDevice].systemVersion floatValue] > 8.6) {
-         [self PHSelectedInmage:indexPath.row];
-     }
+    if ([[UIDevice currentDevice].systemVersion floatValue] < 8.6) {
+        if (self.isMutableSelected) {
+            XMPhotosCollectionViewCell *cell = (XMPhotosCollectionViewCell *)[collectionView cellForItemAtIndexPath:indexPath];
+            if (self.selectCount < 0 || (self.selectCount > self.selIndex.count)) {
+                cell.selBtn.selected = !cell.selBtn.selected;
+                if (cell.selBtn.selected == YES) {
+                    [self.selIndex addObject:@(indexPath.row)];
+                } else {
+                    [self.selIndex removeObject:@(indexPath.row)];
+                }
+            } else {
+                if (cell.selBtn.selected == YES) {
+                    cell.selBtn.selected = !cell.selBtn.selected;
+                    [self.selIndex removeObject:@(indexPath.row)];
+                }
+            }
+        }
+        if (self.blockPhoto) {
+            [self selectedImage:indexPath.row];
+        }
+    }
+    if ([[UIDevice currentDevice].systemVersion floatValue] > 8.6) {
+        XMPhotosCollectionViewCell *cell = (XMPhotosCollectionViewCell *)[collectionView cellForItemAtIndexPath:indexPath];
+        if (self.isMutableSelected) {
+            if (self.selectCount < 0 || (self.selectCount > self.selIndex.count)) {
+                cell.selBtn.selected = !cell.selBtn.selected;
+                if (cell.selBtn.selected == YES) {
+                    [self.selIndex addObject:@(indexPath.row)];
+                } else {
+                    [self.selIndex removeObject:@(indexPath.row)];
+                }
+            } else {
+                if (cell.selBtn.selected == YES) {
+                    cell.selBtn.selected = !cell.selBtn.selected;
+                    [self.selIndex removeObject:@(indexPath.row)];
+                }
+            }
+        }
+        if (self.blockPhoto) {
+            [self delayDismiss:0.5];
+            self.blockPhoto(cell.imageView.image,indexPath.row);
+        }
+    }
 }
 @end

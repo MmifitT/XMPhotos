@@ -32,12 +32,18 @@
 }
 - (IBAction)show:(id)sender {
     XMPhotoCollectionViewController *pushVC = [[UIStoryboard storyboardWithName:@"XMPhotos" bundle:nil]instantiateViewControllerWithIdentifier:@"XMPhotoCollectionViewController"];
-    pushVC.numPerLine = 4;
-    [self.navigationController pushViewController:pushVC animated:YES];
-    [pushVC setSelectedBlock:^(UIImage *image, NSInteger index) {
-        NSLog(@"%ld",(long)index);
-        self.IV.image = image;
+    pushVC.numPerLine = 3;
+    pushVC.selectCount = 5;
+    [pushVC setSelectedPhotoesBlock:^(NSArray *images) {
+        for (UIImage *i in images) {
+            NSLog(@"%@",i);
+        }
     }];
+    [self.navigationController pushViewController:pushVC animated:YES];
+//    [pushVC setSelectedPhotoBlock:^(UIImage *image, NSInteger index) {
+//        NSLog(@"%ld",(long)index);
+//        self.IV.image = image;
+//    }];
 }
 
 @end
